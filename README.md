@@ -257,7 +257,7 @@ Tip: Create a docs/screenshots folder in the repository and keep image names con
 
 ## Authors
 
--Abhiraam Adiga
--Rakshan R
--Vasisht Gaddale
--Aditya Singh Thakur
+- Abhiraam Adiga
+- Rakshan R
+- Vasisht Gaddale
+- Aditya Singh Thakur

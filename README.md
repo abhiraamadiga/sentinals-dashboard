@@ -255,6 +255,9 @@ Tip: Create a docs/screenshots folder in the repository and keep image names con
 - Connects backend AI orchestration with frontend operational tooling
 - Highlights real-world defense/security analytics thinking
 
-## License
+## Authors
 
-No license file is currently present in the repository root. Add one before public distribution.
+- Abhiraam Adiga
+- Rakshan R
+- Vasisht Gaddale
+- Aditya Singh Thakur

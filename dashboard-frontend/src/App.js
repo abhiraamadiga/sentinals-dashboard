@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
@@ -39,6 +39,7 @@ const getCustomIcon = (threatLevel) => {
 };
 
 function App() {
+  const API_BASE = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000';
   const [currentTime, setCurrentTime] = useState(new Date());
   const [selectedFile, setSelectedFile] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
@@ -46,20 +47,43 @@ function App() {
   const [loading, setLoading] = useState(false);
   const [aiAnalysis, setAiAnalysis] = useState(null);
   const [intelligenceData, setIntelligenceData] = useState([]);
+  const [backendHealth, setBackendHealth] = useState({ state: 'checking', service: 'Sentinals Backend' });
+  const [errorMessage, setErrorMessage] = useState('');
 
-  // Update time every second
   useEffect(() => {
     const timer = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
 
-  // Extract threat level from analysis text
+  useEffect(() => {
+    const checkHealth = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/health`);
+        if (!response.ok) {
+          throw new Error('Health endpoint failed');
+        }
+        const health = await response.json();
+        setBackendHealth({
+          state: health.status === 'healthy' ? 'online' : 'degraded',
+          service: health.service || 'Sentinals Backend',
+          aiEnabled: Boolean(health.ai_enabled),
+        });
+      } catch (error) {
+        setBackendHealth({ state: 'offline', service: 'Sentinals Backend', aiEnabled: false });
+      }
+    };
+
+    checkHealth();
+    const interval = setInterval(checkHealth, 25000);
+
+    return () => clearInterval(interval);
+  }, [API_BASE]);
+
   const extractThreatLevel = (analysisText) => {
     const threatMatch = analysisText.match(/threat.{0,20}(high|medium|low)/i);
     return threatMatch ? threatMatch[1].toLowerCase() : 'unknown';
   };
 
-  // Generate random coordinates if no GPS
   const generateRandomCoordinates = () => {
     const baseLat = 20.5937;
     const baseLon = 78.9629;
@@ -69,7 +93,34 @@ function App() {
     };
   };
 
-  // Handle text input submission
+  const stats = useMemo(() => {
+    const threatCounts = intelligenceData.reduce(
+      (acc, item) => {
+        acc[item.threatLevel] = (acc[item.threatLevel] || 0) + 1;
+        return acc;
+      },
+      { high: 0, medium: 0, low: 0, unknown: 0 }
+    );
+
+    return {
+      total: intelligenceData.length,
+      text: intelligenceData.filter((item) => item.type === 'text').length,
+      image: intelligenceData.filter((item) => item.type === 'image').length,
+      high: threatCounts.high,
+      medium: threatCounts.medium,
+      low: threatCounts.low,
+      unknown: threatCounts.unknown,
+    };
+  }, [intelligenceData]);
+
+  const latestIntel = useMemo(() => {
+    return [...intelligenceData].sort((a, b) => b.id - a.id).slice(0, 4);
+  }, [intelligenceData]);
+
+  const clearErrorSoon = () => {
+    setTimeout(() => setErrorMessage(''), 3500);
+  };
+
   const handleTextSubmit = async () => {
     if (!textInput.trim()) {
       alert('Please enter some text to analyze');
@@ -81,10 +132,14 @@ function App() {
     formData.append('report', textInput);
 
     try {
-      const response = await fetch('http://localhost:8000/upload-text', {
+      const response = await fetch(`${API_BASE}/upload-text`, {
         method: 'POST',
         body: formData,
       });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
 
       const result = await response.json();
 
@@ -114,15 +169,15 @@ function App() {
         });
       }
     } catch (error) {
-      console.error('🚨 Text analysis error:', error);
-      alert('Backend connection failed!');
+      console.error('Text analysis error:', error);
+      setErrorMessage('Text analysis failed. Check backend health and try again.');
+      clearErrorSoon();
     }
 
     setLoading(false);
     setTextInput('');
   };
 
-  // Handle image upload submission
   const handleImageSubmit = async () => {
     if (!selectedImage) {
       alert('Please select an image first');
@@ -134,10 +189,14 @@ function App() {
     formData.append('image', selectedImage);
 
     try {
-      const response = await fetch('http://localhost:8000/upload-image', {
+      const response = await fetch(`${API_BASE}/upload-image`, {
         method: 'POST',
         body: formData,
       });
+
+      if (!response.ok) {
+        throw new Error(`Request failed with status ${response.status}`);
+      }
 
       const result = await response.json();
 
@@ -167,15 +226,15 @@ function App() {
         });
       }
     } catch (error) {
-      console.error('🚨 IMAGE UPLOAD ERROR:', error);
-      alert('Backend connection failed!');
+      console.error('Image upload error:', error);
+      setErrorMessage('Image analysis failed. Verify backend and API key configuration.');
+      clearErrorSoon();
     }
 
     setLoading(false);
     setSelectedImage(null);
   };
 
-  // Handle file selection
   const handleFileChange = (e) => {
     const file = e.target.files[0];
     if (file && file.type.startsWith('image/')) {
@@ -190,14 +249,17 @@ function App() {
 
   return (
     <div className="military-dashboard">
-      {/* Header */}
       <header className="dashboard-header">
         <div className="header-left">
-          <h1>🛡️ SENTINALS GEOSPATIAL INTELLIGENCE DASHBOARD</h1>
+          <p className="eyebrow">Operational Intelligence Platform</p>
+          <h1>Sentinals Geospatial Command Center</h1>
+          <p className="header-subtitle">AI-driven field analysis with live threat mapping and mission-grade situational awareness.</p>
           <div className="status-indicators">
-            <span className="status-indicator active">🟢 OPERATIONAL</span>
-            <span className="status-indicator">📡 SECURE LINK</span>
-            <span className="status-indicator">🗺️ GEOSPATIAL ACTIVE</span>
+            <span className={`status-indicator ${backendHealth.state === 'online' ? 'active' : ''}`}>
+              {backendHealth.state === 'online' ? 'ONLINE' : backendHealth.state === 'checking' ? 'CHECKING' : 'OFFLINE'}
+            </span>
+            <span className="status-indicator">AI {backendHealth.aiEnabled ? 'READY' : 'LIMITED'}</span>
+            <span className="status-indicator">MAP ACTIVE</span>
           </div>
         </div>
         <div className="header-right">
@@ -208,27 +270,44 @@ function App() {
         </div>
       </header>
 
-      {/* Main Dashboard Grid */}
+      <section className="quick-metrics">
+        <article className="metric-card">
+          <span>Total Intel</span>
+          <strong>{stats.total}</strong>
+        </article>
+        <article className="metric-card">
+          <span>Text Reports</span>
+          <strong>{stats.text}</strong>
+        </article>
+        <article className="metric-card">
+          <span>Image Reports</span>
+          <strong>{stats.image}</strong>
+        </article>
+        <article className="metric-card alert">
+          <span>High Threats</span>
+          <strong>{stats.high}</strong>
+        </article>
+      </section>
+
+      {errorMessage && <div className="error-banner">{errorMessage}</div>}
+
       <main className="dashboard-grid">
-        {/* Left Column */}
         <div className="left-column">
-          {/* Intelligence Upload Section */}
           <section className="glass-panel upload-section">
             <div className="panel-header">
-              <h2>📤 UPLOAD INTELLIGENCE DATA</h2>
+              <h2>Ingest Intelligence</h2>
               <div className="upload-status">
-                {loading ? <span className="status processing">⚡ PROCESSING...</span>
-                  : <span className="status ready">✅ READY</span>}
+                {loading ? <span className="status processing">Processing</span>
+                  : <span className="status ready">Ready</span>}
               </div>
             </div>
 
             <div className="panel-content">
-              {/* Text Input */}
               <div className="input-group">
-                <label>📝 FIELD REPORT TEXT:</label>
+                <label>Field Report Input</label>
                 <textarea
                   className="text-input"
-                  placeholder="Enter field report, intelligence briefing, or tactical data for AI analysis..."
+                  placeholder="Paste field notes, tactical brief, or raw situation update for intelligence parsing..."
                   value={textInput}
                   onChange={(e) => setTextInput(e.target.value)}
                   rows="4"
@@ -239,13 +318,12 @@ function App() {
                   onClick={handleTextSubmit}
                   disabled={!textInput.trim() || loading}
                 >
-                  {loading ? '⏳ PROCESSING...' : '🧠 ANALYZE TEXT'}
+                  {loading ? 'Processing...' : 'Analyze Text'}
                 </button>
               </div>
 
-              {/* File Upload */}
               <div className="input-group">
-                <label>📁 SURVEILLANCE IMAGE:</label>
+                <label>Surveillance Image</label>
                 <div className="file-upload-area">
                   <input
                     type="file"
@@ -256,9 +334,9 @@ function App() {
                     disabled={loading}
                   />
                   <label htmlFor="file-upload" className="file-upload-label">
-                    {selectedImage ? `📸 ${selectedImage.name}` :
-                      selectedFile ? `📄 ${selectedFile.name}` :
-                        '🎯 SELECT DRONE IMAGE'}
+                    {selectedImage ? `Selected: ${selectedImage.name}` :
+                      selectedFile ? `Unsupported file: ${selectedFile.name}` :
+                        'Drop or Select Recon Image'}
                   </label>
                 </div>
                 <button
@@ -266,20 +344,19 @@ function App() {
                   onClick={handleImageSubmit}
                   disabled={!selectedImage || loading}
                 >
-                  {loading ? '⏳ PROCESSING...' : '🔍 ANALYZE IMAGE'}
+                  {loading ? 'Processing...' : 'Analyze Image'}
                 </button>
               </div>
             </div>
           </section>
 
-          {/* AI Analysis Output */}
           <section className="glass-panel analysis-section">
             <div className="panel-header">
-              <h2>🧠 AI ANALYSIS OUTPUT</h2>
+              <h2>AI Analysis Output</h2>
               <div className="analysis-status">
                 {aiAnalysis ?
-                  <span className="status complete">✅ ANALYSIS COMPLETE</span> :
-                  <span className="status waiting">⏳ AWAITING INPUT</span>
+                  <span className="status complete">Completed</span> :
+                  <span className="status waiting">Awaiting Input</span>
                 }
               </div>
             </div>
@@ -298,7 +375,7 @@ function App() {
                   )}
                   {aiAnalysis.coordinates && (
                     <div className="gps-data">
-                      <strong>📍 Coordinates:</strong> {aiAnalysis.coordinates.lat.toFixed(6)}, {aiAnalysis.coordinates.lon.toFixed(6)}
+                      <strong>Coordinates:</strong> {aiAnalysis.coordinates.lat.toFixed(6)}, {aiAnalysis.coordinates.lon.toFixed(6)}
                     </div>
                   )}
                   <div className="analysis-text">
@@ -307,8 +384,8 @@ function App() {
                 </div>
               ) : (
                 <div className="analysis-placeholder">
-                  <div className="placeholder-icon">🤖</div>
-                  <p>AI ANALYSIS AWAITING INPUT</p>
+                  <div className="placeholder-icon">AI</div>
+                  <p>No analysis yet. Submit a report to start intelligence extraction.</p>
                   <div className="loading-dots">
                     <span></span><span></span><span></span>
                   </div>
@@ -316,70 +393,92 @@ function App() {
               )}
             </div>
           </section>
+
+          <section className="glass-panel feed-section">
+            <div className="panel-header">
+              <h2>Recent Intelligence Feed</h2>
+            </div>
+            <div className="panel-content">
+              {latestIntel.length === 0 ? (
+                <p className="feed-empty">Incoming analyzed records will appear here.</p>
+              ) : (
+                <ul className="feed-list">
+                  {latestIntel.map((intel) => (
+                    <li key={intel.id} className="feed-item">
+                      <div>
+                        <span className="feed-type">{intel.type.toUpperCase()}</span>
+                        <p className="feed-source">{intel.source}</p>
+                      </div>
+                      <div>
+                        <span className={`feed-threat threat-${intel.threatLevel}`}>{intel.threatLevel.toUpperCase()}</span>
+                        <p className="feed-time">{intel.timestamp}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </section>
         </div>
 
-        {/* Right Column */}
         <div className="right-column">
-          {/* Enhanced FREE Leaflet Map */}
           <section className="glass-panel map-section">
             <div className="panel-header">
-              <h2>🗺️ GEOSPATIAL INTELLIGENCE MAP</h2>
+              <h2>Geospatial Intelligence Map</h2>
               <div className="map-controls">
-                <span className="intel-count">📍 {intelligenceData.length} INTEL POINTS</span>
+                <span className="intel-count">{intelligenceData.length} points</span>
               </div>
             </div>
 
             <div className="panel-content map-container">
-              <MapContainer
-                center={[20.5937, 78.9629]}
-                zoom={5}
-                style={{ height: '100%', width: '100%' }}
-                className="natural-map"
-              >
-                {/* Natural Terrain Map with Realistic Colors */}
-                <TileLayer
-                  url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
-                  attribution='&copy; <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics'
-                />
+              <div className="map-shell">
+                <MapContainer
+                  center={[20.5937, 78.9629]}
+                  zoom={5}
+                  style={{ height: '100%', width: '100%' }}
+                  className="natural-map"
+                >
+                  <TileLayer
+                    url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
+                    attribution='&copy; <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics'
+                  />
 
-                {/* Optional: Add labels/roads overlay */}
-                <TileLayer
-                  url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
-                  attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
-                />
+                  <TileLayer
+                    url="https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"
+                    attribution='&copy; <a href="https://www.esri.com/">Esri</a>'
+                  />
 
-                {/* Your existing markers */}
-                {intelligenceData.map((intel) => (
-                  <Marker
-                    key={intel.id}
-                    position={[intel.coordinates.lat, intel.coordinates.lon]}
-                    icon={getCustomIcon(intel.threatLevel)}
-                  >
-                    <Popup>
-                      <div className="intel-popup">
-                        <h4>🛡️ Intelligence Report</h4>
-                        <div className="intel-details">
-                          <p><strong>📊 Type:</strong> {intel.type.toUpperCase()}</p>
-                          <p><strong>📍 Source:</strong> {intel.source}</p>
-                          <p><strong>⚠️ Threat Level:</strong>
-                            <span className={`threat-${intel.threatLevel}`}>
-                              {intel.threatLevel.toUpperCase()}
-                            </span>
-                          </p>
-                          <p><strong>🕐 Time:</strong> {intel.timestamp}</p>
-                        </div>
-                        <div className="intel-analysis">
-                          <strong>📋 Analysis:</strong>
-                          <div className="analysis-preview">
-                            {intel.analysis.substring(0, 300)}...
+                  {intelligenceData.map((intel) => (
+                    <Marker
+                      key={intel.id}
+                      position={[intel.coordinates.lat, intel.coordinates.lon]}
+                      icon={getCustomIcon(intel.threatLevel)}
+                    >
+                      <Popup>
+                        <div className="intel-popup">
+                          <h4>Intelligence Report</h4>
+                          <div className="intel-details">
+                            <p><strong>Type:</strong> {intel.type.toUpperCase()}</p>
+                            <p><strong>Source:</strong> {intel.source}</p>
+                            <p><strong>Threat:</strong>
+                              <span className={`threat-${intel.threatLevel}`}>
+                                {intel.threatLevel.toUpperCase()}
+                              </span>
+                            </p>
+                            <p><strong>Time:</strong> {intel.timestamp}</p>
+                          </div>
+                          <div className="intel-analysis">
+                            <strong>Analysis</strong>
+                            <div className="analysis-preview">
+                              {intel.analysis.substring(0, 300)}...
+                            </div>
                           </div>
                         </div>
-                      </div>
-                    </Popup>
-                  </Marker>
-                ))}
+                      </Popup>
+                    </Marker>
+                  ))}
+                </MapContainer>
 
-                {/* Keep your tactical overlay */}
                 <div className="map-overlay">
                   <div className="crosshair"></div>
                   <div className="range-finder">
@@ -387,34 +486,35 @@ function App() {
                     <div className="range-circle"></div>
                   </div>
                 </div>
-              </MapContainer>
+              </div>
 
             </div>
           </section>
 
-          {/* Mission Status - Updated */}
           <section className="glass-panel mission-status">
             <div className="panel-header">
-              <h2>⚡ OPERATIONAL STATUS</h2>
+              <h2>Operational Status</h2>
             </div>
             <div className="panel-content">
               <div className="status-grid">
                 <div className="status-item">
-                  <span className="status-label">AI SYSTEMS:</span>
-                  <span className="status-value online">ONLINE</span>
-                </div>
-                <div className="status-item">
-                  <span className="status-label">INTEL POINTS:</span>
-                  <span className="status-value">{intelligenceData.length}</span>
-                </div>
-                <div className="status-item">
-                  <span className="status-label">HIGH THREATS:</span>
-                  <span className="status-value threat-high">
-                    {intelligenceData.filter(i => i.threatLevel === 'high').length}
+                  <span className="status-label">backend</span>
+                  <span className={`status-value ${backendHealth.state === 'online' ? 'online' : 'threat-high'}`}>
+                    {backendHealth.state}
                   </span>
                 </div>
                 <div className="status-item">
-                  <span className="status-label">GEOSPATIAL:</span>
+                  <span className="status-label">intel points</span>
+                  <span className="status-value">{intelligenceData.length}</span>
+                </div>
+                <div className="status-item">
+                  <span className="status-label">high threats</span>
+                  <span className="status-value threat-high">
+                    {stats.high}
+                  </span>
+                </div>
+                <div className="status-item">
+                  <span className="status-label">service</span>
                   <span className="status-value active">ACTIVE</span>
                 </div>
               </div>
